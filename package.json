@@ -1,0 +1,15 @@
+{
+  "name": "space3d",
+  "version": "0.1.0",
+  "description": "3d WebGL-based IO game",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Gent Semaj",
+  "license": "GPL-3.0",
+  "dependencies": {
+    "express": "^4.17.1",
+    "socket.io": "^2.3.0"
+  }
+}

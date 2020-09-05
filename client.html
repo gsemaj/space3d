@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>space.io</title>
+    <style>
+
+      body {
+        background-color: black;
+        margin: 0px;
+        width: 100vw;
+        height: 100vh;
+        overflow: hidden;
+      }
+
+      #playArea {
+        border: none;
+        position: fixed;
+        top: 0px;
+        left: 0px;
+      }
+
+    </style>
+    <script src="/socket.io/socket.io.js"></script>
+    <script type="text/javascript">
+
+      var universe = null;
+      var stars = [];
+      var chunks = [];
+
+      function resizeCanvas(canvas) {
+        canvas.width = document.body.clientWidth;
+        canvas.height = document.body.clientHeight;
+      }
+
+      function toThreePlaces(num) {
+        var trimmed = num + "";
+        var dec = trimmed.indexOf(".");
+        return trimmed.substr(0, dec + 4);
+      }
+
+      function paint() {
+        var canvas = document.getElementById("playArea");
+        resizeCanvas(canvas);
+        var ctx = canvas.getContext("2d");
+        var width = canvas.width;
+        var height = canvas.height;
+
+        var camX = getClientShip().xPos;
+        var camY = getClientShip().yPos;
+
+        ctx.font = "18px Arial";
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fillText("x pos: " + toThreePlaces(getClientShip().xPos), 10, 20);
+        ctx.fillText("y pos: " + toThreePlaces(getClientShip().yPos), 10, 40);
+        ctx.fillText("rot: " + toThreePlaces(getClientShip().theta), 10, 60);
+        ctx.fillText("lin vel: " + toThreePlaces(getClientShip().linVel), 10, 80);
+        ctx.fillText("rot vel: " + toThreePlaces(getClientShip().rotVel), 10, 100);
+
+        for(var u = 0; u < stars.length; u++)
+        {
+          var star = stars[u];
+          if(!(Math.abs(getClientShip().yPos - star.y) > height/2 + 10 || Math.abs(getClientShip().xPos - star.x) > width/2 + 10))
+          {
+            reset(ctx);
+            ctx.translate(camX - star.x, camY - star.y);
+
+            if(getClientShip().linVel < 41) {
+              ctx.fillRect(width/2 - 2, height/2 - 2, 4, 4);
+            }
+            else {
+              var stretch = (45.0/40.0)*(getClientShip().linVel - 41) + 15;
+              var angle = toStandard(getClientShip().theta + 90) * Math.PI / 180.0;
+              ctx.strokeStyle = "#FFFFFF";
+              ctx.lineWidth = 2;
+              ctx.beginPath();
+              ctx.moveTo(width/2 - stretch*Math.cos(angle), height/2 - stretch*Math.sin(angle));
+              ctx.lineTo(width/2 + stretch*Math.cos(angle), height/2 + stretch*Math.sin(angle));
+              ctx.stroke();
+            }
+          }
+        }
+
+        var drawnShip = null;
+        for(var s = 0; s < universe.ships.length; s++)
+        {
+          drawnShip = universe.ships[s];
+
+          if(Math.abs(getClientShip().yPos - drawnShip.yPos) > height/2 + 60 || Math.abs(getClientShip().xPos - drawnShip.xPos) > width/2 + 60)
+          {
+            if(drawnShip != getClientShip())
+            {
+              reset(ctx);
+              ctx.fillStyle = drawnShip.color;
+
+              ctx.translate(width/2, height/2);
+              ctx.rotate(Math.PI / 2);
+              ctx.rotate(Math.atan2((getClientShip().yPos - drawnShip.yPos) , (getClientShip().xPos - drawnShip.xPos)));
+              ctx.translate(-width/2, -height/2);
+
+              ctx.beginPath();
+              ctx.moveTo(width/2, height/2 - 120);
+              ctx.lineTo(width/2 + 12, height/2 - 100);
+              ctx.lineTo(width/2 - 12, height/2 - 100);
+              ctx.closePath();
+              ctx.fill();
+            }
+          }
+          else
+          {
+            reset(ctx);
+            ctx.translate(camX - drawnShip.xPos, camY - drawnShip.yPos);
+            ctx.fillStyle = drawnShip.color;
+            ctx.translate(width/2, height/2);
+            ctx.rotate(toStandard(drawnShip.theta) * Math.PI / 180.0);
+            ctx.translate(-width/2, -height/2);
+
+            ctx.beginPath();
+            ctx.moveTo(width/2, height/2 - 36);
+            ctx.lineTo(width/2 + 30, height/2 + 30);
+            ctx.lineTo(width/2 - 30, height/2 + 30);
+            ctx.closePath();
+            ctx.fill();
+          }
+        }
+
+        if(isWarping(getClientShip()))
+        {
+          reset(ctx);
+          ctx.fillStyle = "#FFFFFF";
+          ctx.fillRect(-5, -5, width + 10, height + 10);
+        }
+      }
+
+      function reset(ctx) {
+        ctx.resetTransform();
+        ctx.translate(0, 0.5);
+        ctx.lineWidth = 1;
+      }
+
+      // UTIL
+
+      function toStandard(bearing) {
+        return (bearing - 90) * -1;
+      }
+
+      function indexOf(haystack, needle) {
+        for(var i = 0; i < haystack.length; i++) {
+          if(haystack[i] == needle) return i;
+        }
+        return -1;
+      }
+
+      // INPUT
+
+      var keys = [];
+      document.onkeydown = function(evt) {
+        if(indexOf(keys, evt.keyCode) == -1) keys.push(evt.keyCode);
+      };
+      document.onkeyup = function(evt) {
+        var index = indexOf(keys, evt.keyCode);
+        if(index > -1) keys.splice(index, 1);
+      };
+
+      // GAME
+
+      function getClientShip() {
+        for(var s = 0; s < universe.ships.length; s++) {
+          if(universe.ships[s].id == socket.id) return universe.ships[s];
+        }
+        return null;
+      }
+
+      function replaceShip(id, newship) {
+        for(var i = 0; i < universe.ships.length; i++) {
+          if(universe.ships[i].id == id)
+          {
+            universe.ships.splice(i, 1, newship);
+            return;
+          }
+        }
+      }
+
+      function isWarping(ship) {
+        return (ship.linVel >= 40.5 && ship.linVel <= 41);
+      }
+
+      function populated(cx, cy) {
+        for(var ch = 0; ch < chunks.length; ch++)
+        {
+          if(chunks[ch].x == cx && chunks[ch].y == cy)
+          {
+            return true;
+          }
+        }
+        return false;
+      }
+
+      function genChunk(cx, cy) {
+        chunks.push({x:cx, y:cy});
+        console.log("Generated sector (" + cx + ", " + cy + ")");
+        for(var i = 0; i < 5000; i++)
+        {
+          var starX = 10000*(cx + Math.random());
+          var starY = 10000*(cy + Math.random());
+          stars.push({x:starX, y:starY});
+        }
+      }
+
+      function tick() {
+
+        var shipCX = Math.floor(getClientShip().xPos / 10000);
+        var shipCY = Math.floor(getClientShip().yPos / 10000);
+        if(!populated(shipCX, shipCY))
+        {
+          for(var ox = -1; ox < 2; ox++) {
+            for(var oy = -1; oy < 2; oy++) {
+              genChunk(shipCX + ox, shipCY + oy);
+            }
+          }
+        }
+
+        if(indexOf(keys, 65) > -1)
+				  getClientShip().rotVel += (getClientShip().rotVel < 12 ? .5 : .25);
+  			if(indexOf(keys, 68) > -1)
+  				getClientShip().rotVel -= (getClientShip().rotVel > -12 ? .5 : .25);
+        if(indexOf(keys, 87) > -1)
+					getClientShip().linVel += (getClientShip().linVel < 80 ? (getClientShip().linVel > 41 ? 1.2 : .3) : .15);
+				if(indexOf(keys, 83) > -1)
+					getClientShip().linVel -= .5;
+
+        // all ships
+        var ship = null;
+        for(var s = 0; s < universe.ships.length; s++)
+        {
+          ship = universe.ships[s];
+
+          if(ship.linVel > 0) ship.linVel -= .15;
+          if(ship.linVel < 0) ship.linVel = 0;
+          if(ship.rotVel > 0) ship.rotVel -= .25;
+          if(ship.rotVel < 0) ship.rotVel += .25;
+          ship.theta += ship.rotVel;
+          if(ship.theta > 360) ship.theta -= 360;
+          if(ship.theta < 0) ship.theta += 360;
+
+          if(ship.theta == 0) ship.yPos -= ship.linVel;
+          else if(ship.theta == 90) ship.xPos += ship.linVel;
+          else if(ship.theta == 180) ship.yPos += ship.linVel;
+          else if(ship.theta == 270) ship.xPos -= ship.linVel;
+          else {
+            ship.yPos += Math.cos(toStandard(ship.theta) * Math.PI / 180.0)*ship.linVel;
+      			ship.xPos += -Math.sin(toStandard(ship.theta) * Math.PI / 180.0)*ship.linVel;
+          }
+        }
+
+        socket.emit('update', getClientShip());
+
+        paint();
+      }
+
+      // SERVER INTERACTION
+      var socket = io();
+
+      socket.on('universe', function(rec){
+        if(universe == null)
+        {
+          universe = rec;
+          setInterval(tick, 50);
+        }
+        else {
+          var temp = getClientShip();
+          universe = rec;
+          replaceShip(socket.id, temp);
+        }
+      });
+
+    </script>
+  </head>
+  <body>
+    <canvas id="playArea"></canvas>
+  </body>
+</html>
